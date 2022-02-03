@@ -1,3 +1,4 @@
+#include <iomanip>
 #include <random>
 #include <sstream>
 #include <string>
@@ -5,19 +6,18 @@ using namespace std;
 
 struct User {
   string address;
-  string ledgerCopy;
+  string ledgerCopy = "";
 
   User(string address = "")
       : address(address == "" ? generate_uuid_v4() : address){};
 
   string toString() {
-    return "user : {\n\t" + this->address + "\n\t" + this->ledgerCopy + "\n}\n";
+    stringstream ss;
+    ss << this->address << ": " << this->ledgerCopy << '\n';
+    return ss.str();
   }
 
-  int setLedgerCopy(string updatedLedger) {
-    this->ledgerCopy = updatedLedger;
-    return 0;
-  }
+  void setLedgerCopy(string updatedLedger) { ledgerCopy = updatedLedger; }
 
   string generate_uuid_v4() {
     static std::random_device rd;
