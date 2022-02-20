@@ -1,20 +1,20 @@
 #include "bits/stdc++.h"
 
-#include "block.h"
-#include <vector>
+#include "./block.h"
+#include "./utils.h"
 
 /*
-		TODO:
-                 - coinjoin ✅
-                        - fragment payout ️randomly
-                 - user store balance and server perform transfer
+TODO:
+ - coinjoin ✅
+                - fragment payout ️randomly (maybe second escrow)
+                - (bug) only one transaction happens then stops accepting
 
-                 - *distribute users
-                    - client / server binaries
-                    - local client User file, eventually encrypted
-                        - addressBook maps to ip:port/~/.userfile
-                 - implement unique block hash
-                 - hardware wallet
+ - *distribute users
+        - client / server binaries
+        - local client User file, eventually encrypted
+                - addressBook maps to ip:port/~/.userfile
+ - implement unique block hash
+ - hardware wallet
  */
 
 using namespace std;
@@ -27,7 +27,7 @@ Block setup(map<string, User *> &addressBook) {
 
   // Create demo users
   for (string addr : DEMO_ADDRESSES) {
-    User *temp = new User(addr);
+    User *temp = new User(addr, 1000);
     temp->setLedgerCopy(genesisBlock.toString());
     addressBook[temp->address] = temp;
   }
@@ -77,24 +77,42 @@ string pickRAIDMaster(map<string, User *> &addressBook) {
   }
 }
 
-bool updateLedger(map<string, User *> &addressBook, string &from, string &to,
-                  int &amount) {
+int doTransfer(string from, string to, int amount,
+               map<string, User *> &addressBook) {
+  // Perform transfer
+  addressBook[from]->balance -= amount;
+  addressBook[to]->balance += amount;
+
+  return 0;
+}
+
+int updateLedger(map<string, User *> &addressBook, string &from, string &to,
+                 int &amount) {
 
   string currentLedger;
   string updatedLedger;
   string master = "";
   Block newTransaction = Block(from, to, amount);
 
-  if (from != "esc") {
-
-    master = pickRAIDMaster(addressBook);
-
-    currentLedger = addressBook[master]->ledgerCopy;
-    updatedLedger = currentLedger + newTransaction.toString();
-  } else {
-    currentLedger = addressBook[from]->ledgerCopy;
-    updatedLedger = currentLedger + newTransaction.toString();
+  if (addressBook[from] == NULL) {
+    cout << "Invalid sender address: " << from << endl;
+    return 1;
   }
+
+  if (addressBook[to] == NULL) {
+    cout << "Invalid receiver address: " << to << endl;
+    return 2;
+  }
+
+  if (addressBook[from]->balance < amount) {
+    cout << "Insufficient funds" << endl;
+    return 3;
+  }
+
+  master = pickRAIDMaster(addressBook);
+  cout << "Master: " << master << endl;
+  currentLedger = addressBook[master]->ledgerCopy;
+  updatedLedger = currentLedger + newTransaction.toString();
 
   cout << "ledger: " << currentLedger << "\n\t---> : " << updatedLedger << endl;
 
@@ -110,7 +128,7 @@ bool updateLedger(map<string, User *> &addressBook, string &from, string &to,
       // If more than 'discrepancyCount' nodes throw, master assumed corrupted
       if (corruptedNodes.size() >= discrepancyCount) {
         cout << "Choosing new master node..." << endl;
-        return false;
+        return 4;
       }
     } else {
       node->setLedgerCopy(updatedLedger);
@@ -122,7 +140,9 @@ bool updateLedger(map<string, User *> &addressBook, string &from, string &to,
          << corruptedNodes[i]->ledgerCopy << " ---> " << updatedLedger << endl;
     corruptedNodes[i]->setLedgerCopy(updatedLedger);
   }
-  return true;
+
+  doTransfer(from, to, amount, addressBook);
+  return 0;
 }
 
 struct EscrowUser {
@@ -158,7 +178,7 @@ int main() {
   Block genesisBlock = setup(addressBook);
 
   // Adding demo error to address ledger to test discrepancy fixer
-  addressBook["D"]->ledgerCopy += "boobs,";
+  /* addressBook["D"]->ledgerCopy += "boobs,"; */
 
   // Add beta escrow user (for coinjoin testing)
   /* escrow = EscrowUser(); */
@@ -173,12 +193,23 @@ int main() {
   string from;
   string to;
   int amount = -1;
+  int res = -1;
 
   while (cin >> from >> to >> amount) {
     if (amount != -1) {
-      while (true) {
-        if (escrow->isExpired() || escrow->isFull()) {
-          // do bulk transactions
+      while (res != 0) {
+        cout << "escrow: " << escrow->user.ledgerCopy << endl;
+
+        /*
+         Errors:
+                        1 - invalid sender address
+                        2 - invalid receiver address
+                        3 - insufficient funds
+                        4 - corrupted RAID master
+         */
+
+        if (escrow->isFull()) { // TODO: add expiration timer
+          cout << "PAYING OUT" << endl;
           escrow->payout(addressBook);
           // remove escrow from ledger and reinitialise
           string oldLedger = escrow->user.ledgerCopy;
@@ -188,12 +219,17 @@ int main() {
           addressBook[escrow->user.address] = &escrow->user;
         }
 
-        if (updateLedger(addressBook, from, escrow->user.address, amount)) {
-          escrow->receivers.push_back(make_pair(to, amount));
+        escrow->receivers.push_back(make_pair(to, amount));
+        to = escrow->user.address;
+
+        res = updateLedger(addressBook, from, to, amount);
+        cout << "Result: " << res << endl;
+        if (res == 1 || res == 2 || res == 3) {
           break;
         }
       }
     }
+    res = -1;
     printState(addressBook);
     cout << "----------------------------------------" << endl;
   }
