@@ -3,3 +3,9 @@ build:
 
 clean:
 	rm out
+
+_test:
+	g++ test/random.cpp -o test/random
+	./test/random
+	rm test/random
+
